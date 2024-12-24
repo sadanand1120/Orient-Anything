@@ -1,7 +1,7 @@
 <div align="center">
-<h2>Depth Anything: Unleashing the Power of Large-Scale Unlabeled Data</h2>
+<h2>Orient Anything: Learning Robust Object Orientation Estimation from Rendering 3D Models</h2>
 
-[**Zehan Wang**]()<sup>1*</sup> · [**Ziang Zhang**]()<sup>1*</sup> · [**Tianyu Pang**]()<sup>2</sup> · [**Du Chao**]()<sup>2</sup> · [**Hengshuang Zhao**]()<sup>3</sup> · [**Zhou Zhao**]()<sup>1</sup>
+[**Zehan Wang**](https://scholar.google.com/citations?user=euXK0lkAAAAJ&hl=zh-CN)<sup>1*</sup> · [**Ziang Zhang**](https://scholar.google.com/citations?hl=zh-CN&user=DptGMnYAAAAJ)<sup>1*</sup> · [**Tianyu Pang**](https://scholar.google.com/citations?hl=zh-CN&user=wYDbtFsAAAAJ)<sup>2</sup> · [**Du Chao**](https://scholar.google.com/citations?hl=zh-CN&user=QOp7xW0AAAAJ)<sup>2</sup> · [**Hengshuang Zhao**](https://scholar.google.com/citations?user=4uE10I0AAAAJ&hl&oi=ao)<sup>3</sup> · [**Zhou Zhao**](https://scholar.google.com/citations?user=IIoFY90AAAAJ&hl&oi=ao)<sup>1</sup>
 
 <sup>1</sup>Zhejiang University&emsp;&emsp;&emsp;&emsp;<sup>2</sup>SEA AI Lab&emsp;&emsp;&emsp;&emsp;<sup>3</sup>HKU
 
@@ -20,7 +20,7 @@
 
 ## News
 
-* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/Viglong/OriNet/blob/main/croplargeEX2/dino_weight.pt)) are released.
+* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/spaces/Viglong/Orient-Anything)) are released.
 
 
 
@@ -135,11 +135,11 @@ In order to further enhance the robustness of the model，We further propose the
 If you find this project useful, please consider citing:
 
 ```bibtex
-@inproceedings{orientanything,
-      title={Depth Anything: Unleashing the Power of Large-Scale Unlabeled Data}, 
-      author={Yang, Lihe and Kang, Bingyi and Huang, Zilong and Xu, Xiaogang and Feng, Jiashi and Zhao, Hengshuang},
-      booktitle={CVPR},
-      year={2024}
+@article{orient_anything,
+  title={Orient Anything: Learning Robust Object Orientation Estimation from Rendering 3D Models},
+  author={Wang, Zehan and Zhang, Ziang and Pang, Tianyu and Du, Chao and Zhao, Hengshuang and Zhao, Zhou},
+  journal={arXiv:2412.xxxxx},
+  year={2024}
 }
 ```
 
