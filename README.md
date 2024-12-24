@@ -20,7 +20,7 @@
 
 ## News
 
-* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/spaces/LiheYoung/Depth-Anything)) are released.
+* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/spaces/Viglong/Orient-Anything)) are released.
 
 
 
@@ -45,28 +45,7 @@ Download the checkpoints listed [here](#pre-trained-models) and put them under t
 
 ### Use our models
 ```python
-import cv2
-import torch
 
-from depth_anything_v2.dpt import DepthAnythingV2
-
-DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-
-model_configs = {
-    'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
-    'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
-    'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
-    'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
-}
-
-encoder = 'vitl' # or 'vits', 'vitb', 'vitg'
-
-model = DepthAnythingV2(**model_configs[encoder])
-model.load_state_dict(torch.load(f'checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
-model = model.to(DEVICE).eval()
-
-raw_img = cv2.imread('your/image/path')
-depth = model.infer_image(raw_img) # HxW raw depth map in numpy
 ```
 
 ### Best Practice
@@ -87,10 +66,10 @@ In order to further enhance the robustness of the model, we further propose a te
 If you find this project useful, please consider citing:
 
 ```bibtex
-@inproceedings{orientanything,
-      title={Depth Anything: Unleashing the Power of Large-Scale Unlabeled Data}, 
-      author={Yang, Lihe and Kang, Bingyi and Huang, Zilong and Xu, Xiaogang and Feng, Jiashi and Zhao, Hengshuang},
-      booktitle={CVPR},
-      year={2024}
+@article{orient_anything,
+  title={Orient Anything: Learning Robust Object Orientation Estimation from Rendering 3D Models},
+  author={Wang, Zehan and Zhang, Ziang and Pang, Tianyu and Du, Chao and Zhao, Hengshuang and Zhao, Zhou},
+  journal={arXiv:2412.xxxxx},
+  year={2024}
 }
 ```
