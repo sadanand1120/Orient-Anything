@@ -1,5 +1,5 @@
 <div align="center">
-<h2>Depth Anything: Unleashing the Power of Large-Scale Unlabeled Data</h2>
+<h2>Orient Anything: Learning Robust Object Orientation Estimation from Rendering 3D Models</h2>
 
 [**Zehan Wang**]()<sup>1*</sup> · [**Ziang Zhang**]()<sup>1*</sup> · [**Tianyu Pang**]()<sup>2</sup> · [**Du Chao**]()<sup>2</sup> · [**Hengshuang Zhao**]()<sup>3</sup> · [**Zhou Zhao**]()<sup>1</sup>
 
@@ -14,7 +14,7 @@
 <a href=''><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Paper-yellow'></a>
 </div>
 
-****Orient Anything**, a robust image-based object orientation estimation model. By training on 2M rendered labeled images, it achieves strong zero-shot generalization ability for images in the wild.
+**Orient Anything**, a robust image-based object orientation estimation model. By training on 2M rendered labeled images, it achieves strong zero-shot generalization ability for images in the wild.
 
 ![teaser](assets/demo.png)
 
@@ -70,16 +70,16 @@ depth = model.infer_image(raw_img) # HxW raw depth map in numpy
 ```
 
 ### Best Practice
-为了避免歧义，我们的模型只支持包含单个物体的图像的输入。对于通常包含多个物体的图像，结合DINO-grounding来isolate出各个物体，分别预测朝向是一个好的选择。
+To avoid ambiguity, our model only supports input of images containing a single object. For images that contain multiple objects, it is a good choice to combine DINO-grounding and SAM to isolate each object and predict the orientation separately.
 
 ```python
-[ToDo]怎么结合DINO-grounding分离物体
+[ToDo]
 ```
 
 ### Test-Time Augmentation
-为了进一步增强模型的鲁棒性，我们进一步提出test-time ensemble策略。输入的图像会被随机裁剪，变成不同的variant，对不同变体预测出来的朝向被vote作为最终的预测结果。
+In order to further enhance the robustness of the model, we further propose a test-time ensemble strategy. The input image will be randomly cropped into different variants, and the orientations predicted for different variants will be voted as the final prediction results.
 ```python
-[ToDo]怎么做test-time ensemble
+[ToDo]
 ```
 
 ## Citation
