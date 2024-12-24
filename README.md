@@ -14,13 +14,13 @@
 <a href=''><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Paper-yellow'></a>
 </div>
 
-****Orient Anything**, a robust image-based object orientation estimation model. By training on 2M rendered labeled images, it achieves strong zero-shot generalization ability for images in the wild.
+**Orient Anything**, a robust image-based object orientation estimation model. By training on 2M rendered labeled images, it achieves strong zero-shot generalization ability for images in the wild.
 
 ![teaser](assets/demo.png)
 
 ## News
 
-* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/spaces/LiheYoung/Depth-Anything)) are released.
+* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/Viglong/OriNet/blob/main/croplargeEX2/dino_weight.pt)) are released.
 
 
 
@@ -30,57 +30,105 @@ We provide **three models** of varying scales for robust object orientation esti
 
 | Model | Params | Checkpoint |
 |:-|-:|:-:|
-| Orient-Anything-Small | xxM | [Download]() |
-| Orient-Anything-Base | xxM | [Download]() |
-| Orient-Anything-Large | xxxM | [Download]() |
+| Orient-Anything-Small | - M | Coming soon |
+| Orient-Anything-Base | - M | Coming soon |
+| Orient-Anything-Large | - M | [Download](https://huggingface.co/Viglong/OriNet/blob/main/croplargeEX2/dino_weight.pt) |
 
 ## Usage
 
-### Prepraration
+### 1 Prepraration
 
 ```bash
+pip install -r requirements.txt
 ```
 
-Download the checkpoints listed [here](#pre-trained-models) and put them under the `checkpoints` directory.
+### 2 Use our models
+#### 2.1 In Gradio app
+Start gradio by executing the following script:
 
-### Use our models
+```bash
+python app.py
+```
+then open GUI page(default is https://127.0.0.1:7860) in web browser.
+
+or, you can try it in our [Huggingface-Space](https://huggingface.co/spaces/Viglong/Orient-Anything)
+
+#### 2.2 In Python Scripts
 ```python
-import cv2
+from paths import *
+import numpy as np
+from vision_tower import DINOv2_MLP
+from transformers import AutoImageProcessor
 import torch
+import os
+from PIL import Image
 
-from depth_anything_v2.dpt import DepthAnythingV2
+import torch.nn.functional as F
+from utils import *
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+from huggingface_hub import hf_hub_download
+ckpt_path = hf_hub_download(repo_id="Viglong/OriNet", filename="croplargeEX2/dino_weight.pt", repo_type="model", cache_dir='./', resume_download=True)
+print(ckpt_path)
 
-model_configs = {
-    'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
-    'vitb': {'encoder': 'vitb', 'features': 128, 'out_channels': [96, 192, 384, 768]},
-    'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
-    'vitg': {'encoder': 'vitg', 'features': 384, 'out_channels': [1536, 1536, 1536, 1536]}
-}
+save_path = './'
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+dino = DINOv2_MLP(
+                    dino_mode   = 'large',
+                    in_dim      = 1024,
+                    out_dim     = 360+180+180+2,
+                    evaluate    = True,
+                    mask_dino   = False,
+                    frozen_back = False
+                )
 
-encoder = 'vitl' # or 'vits', 'vitb', 'vitg'
+dino.eval()
+print('model create')
+dino.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
+dino = dino.to(device)
+print('weight loaded')
+val_preprocess   = AutoImageProcessor.from_pretrained(DINO_LARGE, cache_dir='./')
 
-model = DepthAnythingV2(**model_configs[encoder])
-model.load_state_dict(torch.load(f'checkpoints/depth_anything_v2_{encoder}.pth', map_location='cpu'))
-model = model.to(DEVICE).eval()
 
-raw_img = cv2.imread('your/image/path')
-depth = model.infer_image(raw_img) # HxW raw depth map in numpy
+def get_3angle(image):
+    
+    # image = Image.open(image_path).convert('RGB')
+    image_inputs = val_preprocess(images = image)
+    image_inputs['pixel_values'] = torch.from_numpy(np.array(image_inputs['pixel_values'])).to(device)
+    with torch.no_grad():
+        dino_pred = dino(image_inputs)
+
+    gaus_ax_pred   = torch.argmax(dino_pred[:, 0:360], dim=-1)
+    gaus_pl_pred   = torch.argmax(dino_pred[:, 360:360+180], dim=-1)
+    gaus_ro_pred   = torch.argmax(dino_pred[:, 360+180:360+180+180], dim=-1)
+    confidence     = F.softmax(dino_pred[:, -2:], dim=-1)[0][0]
+    angles = torch.zeros(4)
+    angles[0]  = gaus_ax_pred
+    angles[1]  = gaus_pl_pred - 90
+    angles[2]  = gaus_ro_pred - 90
+    angles[3]  = confidence
+    return angles
+
+image_path = '/path/to/image'
+origin_image = Image.open(image_path).convert('RGB')
+angles = get_3angle(origin_image)
+azimuth     = float(angles[0])
+polar       = float(angles[1])
+rotation    = float(angles[2])
+confidence  = float(angles[3])
+
+
 ```
+
 
 ### Best Practice
-为了避免歧义，我们的模型只支持包含单个物体的图像的输入。对于通常包含多个物体的图像，结合DINO-grounding来isolate出各个物体，分别预测朝向是一个好的选择。
+To avoid ambiguity, our model only supports inputs that contain images of a single object. For daily images that usually contain multiple objects, it is a good choice to isolate each object with DINO-grounding and predict the orientation separately.
 
-```python
-[ToDo]怎么结合DINO-grounding分离物体
-```
+To construct the pipeline, please refer to [Grounded-Segment-Anything](https://github.com/IDEA-Research/Grounded-Segment-Anything).
 
 ### Test-Time Augmentation
-为了进一步增强模型的鲁棒性，我们进一步提出test-time ensemble策略。输入的图像会被随机裁剪，变成不同的variant，对不同变体预测出来的朝向被vote作为最终的预测结果。
-```python
-[ToDo]怎么做test-time ensemble
-```
+In order to further enhance the robustness of the model，We further propose the test-time ensemble strategy. The input images will be randomly cropped into different variants, and the predicted orientation of different variants will be voted as the final prediction result. We implement this strategy in functions `get_3angle_infer_aug()` and `get_crop_images()`.
+
+
 
 ## Citation
 
@@ -94,3 +142,6 @@ If you find this project useful, please consider citing:
       year={2024}
 }
 ```
+
+## Acknowledgement
+Thanks to the open source of the following projects: [Grounded-Segment-Anything](https://github.com/IDEA-Research/Grounded-Segment-Anything), [render-py](https://github.com/tvytlx/render-py)
