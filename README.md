@@ -8,10 +8,10 @@
 *Equal Contribution
 
 
-<a href=""><img src='https://img.shields.io/badge/arXiv-Orient Anything-red' alt='Paper PDF'></a>
-<a href=''><img src='https://img.shields.io/badge/Project_Page-Orient Anything-green' alt='Project Page'></a>
-<a href='g'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue'></a>
-<a href=''><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Paper-yellow'></a>
+<a href='https://arxiv.org/abs/2412.18605'><img src='https://img.shields.io/badge/arXiv-Orient Anything-red' alt='Paper PDF'></a>
+<a href='https://orient-anything.github.io'><img src='https://img.shields.io/badge/Project_Page-Orient Anything-green' alt='Project Page'></a>
+<a href='https://huggingface.co/spaces/Viglong/Orient-Anything'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue'></a>
+<a href='https://huggingface.co/papers/2412.18605'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Paper-yellow'></a>
 </div>
 
 **Orient Anything**, a robust image-based object orientation estimation model. By training on 2M rendered labeled images, it achieves strong zero-shot generalization ability for images in the wild.
