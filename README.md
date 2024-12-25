@@ -101,13 +101,11 @@ confidence  = float(angles[3])
 
 ### Best Practice
 To avoid ambiguity, our model only supports inputs that contain images of a single object. For daily images that usually contain multiple objects, it is a good choice to isolate each object with DINO-grounding and predict the orientation separately.
-
-To construct the pipeline, please refer to [Grounded-Segment-Anything](https://github.com/IDEA-Research/Grounded-Segment-Anything).
-
+```python
+[ToDo]
+```
 ### Test-Time Augmentation
 In order to further enhance the robustness of the model，We further propose the test-time ensemble strategy. The input images will be randomly cropped into different variants, and the predicted orientation of different variants will be voted as the final prediction result. We implement this strategy in functions `get_3angle_infer_aug()` and `get_crop_images()`.
-
-
 
 ## Citation
 
