@@ -138,7 +138,7 @@ If you find this project useful, please consider citing:
 @article{orient_anything,
   title={Orient Anything: Learning Robust Object Orientation Estimation from Rendering 3D Models},
   author={Wang, Zehan and Zhang, Ziang and Pang, Tianyu and Du, Chao and Zhao, Hengshuang and Zhao, Zhou},
-  journal={arXiv:2412.xxxxx},
+  journal={arXiv:2412.18605},
   year={2024}
 }
 ```
