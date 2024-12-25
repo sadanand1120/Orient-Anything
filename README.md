@@ -20,7 +20,7 @@
 
 ## News
 
-* **2024-12-24:** Paper, project page, code, models, and demo ([HuggingFace](https://huggingface.co/spaces/Viglong/Orient-Anything)) are released.
+* **2024-12-24:** [Paper](https://arxiv.org/abs/2412.18605), [Project Page](https://orient-anything.github.io), [Code](https://github.com/SpatialVision/Orient-Anything), Models, and [Demo](https://huggingface.co/spaces/Viglong/Orient-Anything) are released.
 
 
 
