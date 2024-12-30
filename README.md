@@ -30,8 +30,8 @@ We provide **three models** of varying scales for robust object orientation esti
 
 | Model | Params | Checkpoint |
 |:-|-:|:-:|
-| Orient-Anything-Small | - M | Coming soon |
-| Orient-Anything-Base | - M | Coming soon |
+| Orient-Anything-Small | 23.3 M | [Download](https://huggingface.co/Viglong/OriNet/blob/main/cropsmallEx03/dino_weight.pt) |
+| Orient-Anything-Base | 87.8 M | [Download](https://huggingface.co/Viglong/OriNet/blob/main/cropbaseEx032/dino_weight.pt) |
 | Orient-Anything-Large | 305 M | [Download](https://huggingface.co/Viglong/OriNet/blob/main/croplargeEX2/dino_weight.pt) |
 
 ## Usage
