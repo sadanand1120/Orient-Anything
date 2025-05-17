@@ -19,7 +19,7 @@
 ![teaser](assets/demo.png)
 
 ## News
-
+* **2025-05-01:** Orient Anything is accepted by ICML 2025!
 * **2024-12-24:** [Paper](https://arxiv.org/abs/2412.18605), [Project Page](https://orient-anything.github.io), [Code](https://github.com/SpatialVision/Orient-Anything), Models, and [Demo](https://huggingface.co/spaces/Viglong/Orient-Anything) are released.
 
 
