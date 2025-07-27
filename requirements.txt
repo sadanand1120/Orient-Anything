@@ -1,8 +1,10 @@
-torch==2.2.1
-transformers==4.38
+#Install manually
+#torch
+
+transformers
 matplotlib
-pillow==10.2.0
-huggingface-hub==0.26.5
+pillow
+huggingface-hub
 gradio==5.9.0
 numpy==1.26.4
 onnxruntime

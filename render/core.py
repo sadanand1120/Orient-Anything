@@ -1,14 +1,9 @@
 import typing as t
 from functools import partial
-
 import numpy as np
 from copy import deepcopy
 from .canvas import Canvas
-
 from . import speedup
-
-
-# 2D part
 
 
 class Vec2d:
@@ -33,14 +28,8 @@ class Vec2d:
         return self.x == other.x and self.y == other.y
 
 
-def draw_line(
-    v1: Vec2d, v2: Vec2d, canvas: Canvas, color: t.Union[tuple, str] = "white"
-):
-    """
-    Draw a line with a specified color
-
-    https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
-    """
+def draw_line(v1: Vec2d, v2: Vec2d, canvas: Canvas, color: t.Union[tuple, str] = "white"):
+    """Draw line using Bresenham's algorithm"""
     v1, v2 = deepcopy(v1), deepcopy(v2)
     if v1 == v2:
         canvas.draw((v1.x, v1.y), color=color)
@@ -67,11 +56,7 @@ def draw_line(
 
 
 def draw_triangle(v1, v2, v3, canvas, color, wireframe=False):
-    """
-    Draw a triangle with 3 ordered vertices
-
-    http://www.sunshine2k.de/coding/java/TriangleRasterization/TriangleRasterization.html
-    """
+    """Draw triangle with 3 ordered vertices"""
     _draw_line = partial(draw_line, canvas=canvas, color=color)
 
     if wireframe:
@@ -111,7 +96,6 @@ def draw_triangle(v1, v2, v3, canvas, color, wireframe=False):
 
     v1, v2, v3 = sort_vertices_asc_by_y((v1, v2, v3))
 
-    # 填充
     if v1.y == v2.y == v3.y:
         pass
     elif v2.y == v3.y:
@@ -124,14 +108,10 @@ def draw_triangle(v1, v2, v3, canvas, color, wireframe=False):
         fill_top_flat_triangle(v2, v4, v3)
 
 
-# 3D part
-
-
 class Vec3d:
     __slots__ = "x", "y", "z", "arr"
 
     def __init__(self, *args):
-        # for Vec4d cast
         if len(args) == 1 and isinstance(args[0], Vec4d):
             vec4 = args[0]
             arr_value = (vec4.x, vec4.y, vec4.z)
@@ -148,8 +128,7 @@ class Vec3d:
         return self.__class__(*[ds - do for ds, do in zip(self.arr, other.arr)])
 
     def __bool__(self):
-        """ False for zero vector (0, 0, 0)
-        """
+        """False for zero vector (0, 0, 0)"""
         return any(self.arr)
 
 
@@ -183,45 +162,40 @@ class Vec4d(Mat4d):
         self.arr = self.value.reshape((1, 4))
 
 
-# Math util
 def normalize(v: Vec3d):
+    """Normalize 3D vector"""
     return Vec3d(*speedup.normalize(*v.arr))
 
 
 def dot_product(a: Vec3d, b: Vec3d):
+    """Calculate dot product of two 3D vectors"""
     return speedup.dot_product(*a.arr, *b.arr)
 
 
 def cross_product(a: Vec3d, b: Vec3d):
+    """Calculate cross product of two 3D vectors"""
     return Vec3d(*speedup.cross_product(*a.arr, *b.arr))
 
+
 BASE_LIGHT = 0.9
+
+
 def get_light_intensity(face) -> float:
-    # lights = [Vec3d(-2, 4, -10), Vec3d(10, 4, -2), Vec3d(8, 8, -8), Vec3d(0, 0, -8)]
+    """Calculate lighting intensity for face"""
     lights = [Vec3d(-2, 4, -10)]
-    # lights = []
 
     v1, v2, v3 = face
     up = normalize(cross_product(v2 - v1, v3 - v1))
     intensity = BASE_LIGHT
     for light in lights:
-        intensity += dot_product(up, normalize(light))*0.2
+        intensity += dot_product(up, normalize(light)) * 0.2
     return intensity
 
 
 def look_at(eye: Vec3d, target: Vec3d, up: Vec3d = Vec3d(0, -1, 0)) -> Mat4d:
-    """
-    http://www.songho.ca/opengl/gl_camera.html#lookat
-
-    Args:
-        eye: 摄像机的世界坐标位置
-        target: 观察点的位置
-        up: 就是你想让摄像机立在哪个方向
-            https://stackoverflow.com/questions/10635947/what-exactly-is-the-up-vector-in-opengls-lookat-function
-            这里默认使用了 0, -1, 0， 因为 blender 导出来的模型数据似乎有问题，导致y轴总是反的，于是把摄像机的up也翻一下得了。
-    """
+    """Create look-at view matrix"""
     f = normalize(eye - target)
-    l = normalize(cross_product(up, f))  # noqa: E741
+    l = normalize(cross_product(up, f))
     u = cross_product(f, l)
 
     rotate_matrix = Mat4d(
@@ -234,36 +208,8 @@ def look_at(eye: Vec3d, target: Vec3d, up: Vec3d = Vec3d(0, -1, 0)) -> Mat4d:
     return Mat4d(value=(rotate_matrix * translate_matrix).value)
 
 
-def perspective_project(r, t, n, f, b=None, l=None):  # noqa: E741
-    """
-    目的：
-        把相机坐标转换成投影在视网膜的范围在(-1, 1)的笛卡尔坐标
-
-    原理：
-        对于x，y坐标，相似三角形可以算出投影点的x，y
-        对于z坐标，是假设了near是-1，far是1，然后带进去算的
-        http://www.songho.ca/opengl/gl_projectionmatrix.html
-        https://www.scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/opengl-perspective-projection-matrix
-
-    推导出来的矩阵：
-        [
-            2n/(r-l) 0        (r+l/r-l)   0
-            0        2n/(t-b) (t+b)/(t-b) 0
-            0        0        -(f+n)/f-n  (-2*f*n)/(f-n)
-            0        0        -1          0
-        ]
-
-    实际上由于我们用的视网膜(near pane)是个关于远点对称的矩形，所以矩阵简化为：
-        [
-            n/r      0        0           0
-            0        n/t      0           0
-            0        0        -(f+n)/f-n  (-2*f*n)/(f-n)
-            0        0        -1          0
-        ]
-
-    Args:
-        r: right, t: top, n: near, f: far, b: bottom, l: left
-    """
+def perspective_project(r, t, n, f, b=None, l=None):
+    """Create perspective projection matrix"""
     return Mat4d(
         [
             [n / r, 0, 0, 0],
@@ -275,8 +221,7 @@ def perspective_project(r, t, n, f, b=None, l=None):  # noqa: E741
 
 
 def draw(screen_vertices, world_vertices, model, canvas, wireframe=True):
-    """standard algorithm
-    """
+    """Draw model using standard algorithm"""
     for triangle_indices in model.indices:
         vertex_group = [screen_vertices[idx - 1] for idx in triangle_indices]
         face = [Vec3d(world_vertices[idx - 1]) for idx in triangle_indices]
@@ -291,8 +236,7 @@ def draw(screen_vertices, world_vertices, model, canvas, wireframe=True):
 
 
 def draw_with_z_buffer(screen_vertices, world_vertices, model, canvas):
-    """ z-buffer algorithm
-    """
+    """Draw model using z-buffer algorithm"""
     intensities = []
     triangles = []
     for i, triangle_indices in enumerate(model.indices):
@@ -300,7 +244,6 @@ def draw_with_z_buffer(screen_vertices, world_vertices, model, canvas):
         uv_triangle = [model.uv_vertices[idx - 1] for idx in model.uv_indices[i]]
         world_triangle = [Vec3d(world_vertices[idx - 1]) for idx in triangle_indices]
         intensities.append(abs(get_light_intensity(world_triangle)))
-        # take off the class to let Cython work
         triangles.append(
             [np.append(screen_triangle[i].arr, uv_triangle[i]) for i in range(3)]
         )
@@ -314,20 +257,11 @@ def draw_with_z_buffer(screen_vertices, world_vertices, model, canvas):
             u, v = dot[3], dot[4]
             color = model.texture_array[u, v]
             canvas.draw((dot[1], dot[2]), tuple(int(c * intensity) for c in color[:3]))
-            # TODO: add object rendering mode (no texture)
-            # canvas.draw((dot[1], dot[2]), (int(255 * intensity),) * 3)
 
 
 def render(model, height, width, filename, cam_loc, wireframe=False):
-    """
-    Args:
-        model: the Model object
-        height: cavas height
-        width: cavas width
-        picname: picture file name
-    """
+    """Render 3D model to image"""
     model_matrix = Mat4d([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-    # TODO: camera configration
     view_matrix = look_at(Vec3d(cam_loc[0], cam_loc[1], cam_loc[2]), Vec3d(0, 0, 0))
     projection_matrix = perspective_project(0.5, 0.5, 3, 1000)
 
@@ -339,9 +273,7 @@ def render(model, height, width, filename, cam_loc, wireframe=False):
         return projection_matrix * view_matrix * world_vertex
 
     def ndc(v):
-        """
-        各个坐标同时除以 w，得到 NDC 坐标
-        """
+        """Convert to normalized device coordinates"""
         v = v.value
         w = v[3, 0]
         x, y, z = v[0, 0] / w, v[1, 0] / w, v[2, 0] / w
@@ -357,7 +289,6 @@ def render(model, height, width, filename, cam_loc, wireframe=False):
             0.5 * (f - n) * v.value[2, 0] + 0.5 * (f + n),
         )
 
-    # the render pipeline
     screen_vertices = [viewport(ndc(mvp(v))) for v in model.vertices]
 
     with Canvas(filename, height, width) as canvas:
@@ -365,6 +296,6 @@ def render(model, height, width, filename, cam_loc, wireframe=False):
             draw(screen_vertices, world_vertices, model, canvas)
         else:
             draw_with_z_buffer(screen_vertices, world_vertices, model, canvas)
-        
+
         render_img = canvas.add_white_border().copy()
     return render_img

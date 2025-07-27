@@ -3,14 +3,18 @@ from torch import nn
 import torch.nn.init as init
 import torch.nn.functional as F
 
-from paths import *
-
 from typing import Dict, List, Optional, Set, Tuple, Union
 from transformers import AutoImageProcessor, AutoModel, Dinov2Model
 from transformers.models.dinov2.modeling_dinov2 import Dinov2Embeddings
 from transformers.models.dinov2.configuration_dinov2 import Dinov2Config
 import numpy as np
 from contextlib import nullcontext
+
+DINO_SMALL = "facebook/dinov2-small"
+DINO_BASE = "facebook/dinov2-base"
+DINO_LARGE = "facebook/dinov2-large"
+DINO_GIANT = "facebook/dinov2-giant"
+
 
 def get_activation(activation):
     if activation.lower() == 'gelu':
@@ -33,10 +37,9 @@ def get_activation(activation):
         return nn.ReLU(inplace=True)
 
 
-
 class MLP_dim(nn.Module):
     def __init__(
-        self, in_dim=512, out_dim=1024, bias=True, activation='relu'):
+            self, in_dim=512, out_dim=1024, bias=True, activation='relu'):
         super().__init__()
         self.act = get_activation(activation)
         self.net1 = nn.Sequential(
@@ -51,6 +54,7 @@ class MLP_dim(nn.Module):
 
     def forward(self, x):
         return self.net2(self.net1(x))
+
 
 class FLIP_Dinov2Embeddings(Dinov2Embeddings):
     """
@@ -73,45 +77,41 @@ class FLIP_Dinov2Embeddings(Dinov2Embeddings):
         embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width)
 
         if bool_masked_pos is not None:
-            # embeddings = torch.where(
-            #     bool_masked_pos.unsqueeze(-1), self.mask_token.to(embeddings.dtype).unsqueeze(0), embeddings
-            # )
-            B,S,D = embeddings.shape
+            B, S, D = embeddings.shape
             batch_indices = torch.arange(B).unsqueeze(1)
             embeddings = embeddings[batch_indices, bool_masked_pos]
-
         embeddings = self.dropout(embeddings)
-
         return embeddings
+
 
 class FLIP_DINOv2(Dinov2Model):
     def __init__(self, config):
         super().__init__(config)
-        
         self.embeddings = FLIP_Dinov2Embeddings(config)
-        
+
+
 class DINOv2_MLP(nn.Module):
-    def __init__(self, 
+    def __init__(self,
                  dino_mode,
                  in_dim,
                  out_dim,
                  evaluate,
                  mask_dino,
                  frozen_back
-                ) -> None:
+                 ) -> None:
         super().__init__()
         # self.dinov2 = AutoModel.from_pretrained(DINO_BASE)
         if dino_mode == 'base':
-            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_BASE, cache_dir='./')
+            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_BASE)
         elif dino_mode == 'large':
-            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_LARGE, cache_dir='./')
+            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_LARGE)
         elif dino_mode == 'small':
-            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_SMALL, cache_dir='./')
+            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_SMALL)
         elif dino_mode == 'giant':
-            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_GIANT, cache_dir='./')
-        
+            self.dinov2 = FLIP_DINOv2.from_pretrained(DINO_GIANT)
+
         self.down_sampler = MLP_dim(in_dim=in_dim, out_dim=out_dim)
-        self.random_mask  = False
+        self.random_mask = False
         if not evaluate:
             self.init_weights(self.down_sampler)
             self.random_mask = mask_dino
@@ -119,43 +119,32 @@ class DINOv2_MLP(nn.Module):
             self.forward_mode = torch.no_grad()
         else:
             self.forward_mode = nullcontext()
-        
+
     def forward(self, img_inputs):
         device = self.get_device()
-        # print(img_inputs['pixel_values'].shape)
-        
         with self.forward_mode:
             if self.random_mask:
                 B = len(img_inputs['pixel_values'])
                 S = 256
                 indices = []
                 for i in range(B):
-                    tmp = torch.randperm(S)[:S//2]
+                    tmp = torch.randperm(S)[:S // 2]
                     tmp = tmp.sort().values + 1
                     indices.append(tmp)
                 indices = torch.stack(indices, dim=0)
                 indices = torch.cat([torch.zeros(B, 1, dtype=torch.long, device='cpu'), indices], dim=1)
-                # print(indices.shape)
                 img_inputs['bool_masked_pos'] = indices.to(device)
-                
             dino_outputs = self.dinov2(**img_inputs)
             dino_seq = dino_outputs.last_hidden_state
-            # B,S,_ = dino_seq.shape
-            # dino_seq = dino_seq.view(B*S,-1)
-            dino_seq = dino_seq[:,0,:]
-        
+            dino_seq = dino_seq[:, 0, :]
         down_sample_out = self.down_sampler(dino_seq)
-        # down_sample_out = down_sample_out.view(B,S,-1)
-        # down_sample_out = down_sample_out[:,0,:]
-        
         return down_sample_out
-    
+
     def get_device(self):
         return next(self.parameters()).device
-    
+
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
             init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 init.constant_(m.bias, 0)
-

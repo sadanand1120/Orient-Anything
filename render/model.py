@@ -5,9 +5,7 @@ from .core import Vec4d
 
 class Model:
     def __init__(self, filename, texture_filename):
-        """
-        https://en.wikipedia.org/wiki/Wavefront_.obj_file#Vertex_normal_indices
-        """
+        """Load 3D model from OBJ file with texture"""
         self.vertices = []
         self.uv_vertices = []
         self.uv_indices = []

@@ -2,3 +2,7 @@
 .gradio
 .locks
 models*
+.vscode
+ckpts/
+**.pt
+**.ipynb

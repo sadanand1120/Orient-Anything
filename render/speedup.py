@@ -1,9 +1,9 @@
-# import cython
 import numpy as np
 from math import sqrt
 
 
 def normalize(x, y, z):
+    """Normalize 3D vector"""
     unit = sqrt(x * x + y * y + z * z)
     if unit == 0:
         return 0, 0, 0
@@ -11,47 +11,41 @@ def normalize(x, y, z):
 
 
 def get_min_max(a, b, c):
-    min = a
-    max = a
-    if min > b:
-        min = b
-    if min > c:
-        min = c
-    if max < b:
-        max = b
-    if max < c:
-        max = c
-    return int(min), int(max)
+    """Get minimum and maximum of three values"""
+    min_val = a
+    max_val = a
+    if min_val > b:
+        min_val = b
+    if min_val > c:
+        min_val = c
+    if max_val < b:
+        max_val = b
+    if max_val < c:
+        max_val = c
+    return int(min_val), int(max_val)
+
 
 def dot_product(a0, a1, a2, b0, b1, b2):
-    r = a0 * b0 + a1 * b1 + a2 * b2
-    return r
+    """Calculate dot product of two 3D vectors"""
+    return a0 * b0 + a1 * b1 + a2 * b2
 
 
 def cross_product(a0, a1, a2, b0, b1, b2):
+    """Calculate cross product of two 3D vectors"""
     x = a1 * b2 - a2 * b1
     y = a2 * b0 - a0 * b2
     z = a0 * b1 - a1 * b0
-    return x,y,z
+    return x, y, z
 
 
-# @cython.boundscheck(False)
 def generate_faces(triangles, width, height):
-    """ draw the triangle faces with z buffer
-
-    Args:
-        triangles: groups of vertices
-
-    FYI:
-        * zbuffer, https://github.com/ssloy/tinyrenderer/wiki/Lesson-3:-Hidden-faces-removal-(z-buffer)
-        * uv mapping and perspective correction
-    """
-    i, j, k, length     = 0, 0, 0, 0
-    bcy, bcz, x, y, z   = 0.,0.,0.,0.,0.
-    a, b, c             = [0.,0.,0.],[0.,0.,0.],[0.,0.,0.]
-    m, bc               = [0.,0.,0.],[0.,0.,0.]
-    uva, uvb, uvc       = [0.,0.],[0.,0.],[0.,0.]
-    minx, maxx, miny, maxy = 0,0,0,0
+    """Generate triangle faces with z-buffer and texture mapping"""
+    i, j, k, length = 0, 0, 0, 0
+    bcy, bcz, x, y, z = 0., 0., 0., 0., 0.
+    a, b, c = [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]
+    m, bc = [0., 0., 0.], [0., 0., 0.]
+    uva, uvb, uvc = [0., 0.], [0., 0.], [0., 0.]
+    minx, maxx, miny, maxy = 0, 0, 0, 0
     length = triangles.shape[0]
     zbuffer = {}
     faces = []
@@ -68,7 +62,6 @@ def generate_faces(triangles, width, height):
         pixels = []
         for j in range(minx, maxx + 2):
             for k in range(miny - 1, maxy + 2):
-                # 必须显式转换成 double 参与底下的运算，不然结果是错的
                 x = j
                 y = k
 
@@ -80,18 +73,15 @@ def generate_faces(triangles, width, height):
                 else:
                     continue
 
-                # here, -0.00001 because of the precision lose
                 if bc[0] < -0.00001 or bc[1] < -0.00001 or bc[2] < -0.00001:
                     continue
 
                 z = 1 / (bc[0] / a[2] + bc[1] / b[2] + bc[2] / c[2])
 
-                # Blender 导出来的 uv 数据，跟之前的顶点数据有一样的问题，Y轴是个反的，
-                # 所以这里的纹理图片要旋转一下才能 work
+                # UV mapping with perspective correction
                 v = (uva[0] * bc[0] / a[2] + uvb[0] * bc[1] / b[2] + uvc[0] * bc[2] / c[2]) * z * width
                 u = height - (uva[1] * bc[0] / a[2] + uvb[1] * bc[1] / b[2] + uvc[1] * bc[2] / c[2]) * z * height
 
-                # https://en.wikipedia.org/wiki/Pairing_function
                 idx = ((x + y) * (x + y + 1) + y) / 2
                 if zbuffer.get(idx) is None or zbuffer[idx] < z:
                     zbuffer[idx] = z
