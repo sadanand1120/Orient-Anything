@@ -14,77 +14,6 @@ import rembg
 from vision_tower import DINOv2_MLP
 
 
-def render_simple_axes(height, width, filename, cam_loc):
-    """Render 3D coordinate axes as lines with core transformation math"""
-    # Define axes (origin + 3 endpoints)
-    axes = [np.array([0, 0, 0, 1.0]), np.array([30, 0, 0, 1.0]),
-            np.array([0, 0, -30, 1.0]), np.array([0, 30, 0, 1.0])]
-
-    # Create transformation matrices
-    eye = np.array(cam_loc, dtype=np.float64)
-    f = eye / np.linalg.norm(eye)  # Simplified: target is origin
-    up = np.array([0, -1, 0])
-    l = np.cross(up, f) / np.linalg.norm(np.cross(up, f))
-    u = np.cross(f, l)
-
-    view = np.array([[l[0], l[1], l[2], -np.dot(l, eye)],
-                     [u[0], u[1], u[2], -np.dot(u, eye)],
-                     [f[0], f[1], f[2], -np.dot(f, eye)],
-                     [0, 0, 0, 1.0]])
-
-    # Projection matrix (r=0.5, t=0.5, n=3, f=1000)
-    r, t, n, f = 0.5, 0.5, 3, 1000
-    proj = np.array([[n / r, 0, 0, 0], [0, n / t, 0, 0],
-                     [0, 0, -(f + n) / (f - n), (-2 * f * n) / (f - n)], [0, 0, -1, 0]])
-
-    # Transform points to screen coordinates
-    screen_pts = []
-    for pt in axes:
-        clip = proj @ view @ pt
-        if clip[3] != 0:
-            ndc = clip / clip[3]
-            screen_pts.append([width * 0.5 * (ndc[0] + 1), height * 0.5 * (ndc[1] + 1)])
-        else:
-            screen_pts.append([width / 2, height / 2])
-
-    # Draw axes
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
-
-    for axis_idx in range(3):
-        for thickness in range(-1, 2):
-            for offset in range(-1, 2):
-                p1 = [screen_pts[0][0] + thickness, screen_pts[0][1] + offset]
-                p2 = [screen_pts[axis_idx + 1][0] + thickness, screen_pts[axis_idx + 1][1] + offset]
-
-                # Simple line drawing
-                x1, y1, x2, y2 = int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])
-                dx, dy = abs(x2 - x1), abs(y2 - y1)
-                sx, sy = 1 if x1 < x2 else -1, 1 if y1 < y2 else -1
-                err = dx - dy
-
-                while True:
-                    if 0 <= x1 < width and 0 <= y1 < height:
-                        img.putpixel((x1, y1), colors[axis_idx] + (255,))
-                    if x1 == x2 and y1 == y2:
-                        break
-                    e2 = 2 * err
-                    if e2 > -dy:
-                        err -= dy
-                        x1 += sx
-                    if e2 < dx:
-                        err += dx
-                        y1 += sy
-
-    if filename:
-        img.save(filename)
-    return img
-
-
-# ============================================================================
-# ORIENT-ANYTHING CLASS
-# ============================================================================
-
 class OrientAny:
     def __init__(self, ckpt_dir='ckpts', model_name='croplargeEX2_dino_weight.pt'):
         self.ckpt_dir = ckpt_dir
@@ -237,16 +166,78 @@ class OrientAny:
             'confidence': round(float(angles[3]), 2)
         }
 
-    def _render_3D_axis(self, phi, theta, gamma):
+    @staticmethod
+    def _render_3D_axis(phi, theta, gamma):
         """Render 3D coordinate axes as simple lines"""
         radius = 240
         camera_location = [-1 * radius * math.cos(phi), -1 * radius * math.tan(theta), radius * math.sin(phi)]
-        img = render_simple_axes(
-            height=512,
-            width=512,
-            filename="tmp_render.png",
-            cam_loc=camera_location
-        )
+
+        # Inlined render_simple_axes code
+        height, width, filename, cam_loc = 512, 512, "tmp_render.png", camera_location
+
+        # Define axes (origin + 3 endpoints)
+        axes = [np.array([0, 0, 0, 1.0]), np.array([30, 0, 0, 1.0]),
+                np.array([0, 0, -30, 1.0]), np.array([0, 30, 0, 1.0])]
+
+        # Create transformation matrices
+        eye = np.array(cam_loc, dtype=np.float64)
+        f = eye / np.linalg.norm(eye)  # Simplified: target is origin
+        up = np.array([0, -1, 0])
+        l = np.cross(up, f) / np.linalg.norm(np.cross(up, f))
+        u = np.cross(f, l)
+
+        view = np.array([[l[0], l[1], l[2], -np.dot(l, eye)],
+                         [u[0], u[1], u[2], -np.dot(u, eye)],
+                         [f[0], f[1], f[2], -np.dot(f, eye)],
+                         [0, 0, 0, 1.0]])
+
+        # Projection matrix (r=0.5, t=0.5, n=3, f=1000)
+        r, t, n, f = 0.5, 0.5, 3, 1000
+        proj = np.array([[n / r, 0, 0, 0], [0, n / t, 0, 0],
+                         [0, 0, -(f + n) / (f - n), (-2 * f * n) / (f - n)], [0, 0, -1, 0]])
+
+        # Transform points to screen coordinates
+        screen_pts = []
+        for pt in axes:
+            clip = proj @ view @ pt
+            if clip[3] != 0:
+                ndc = clip / clip[3]
+                screen_pts.append([width * 0.5 * (ndc[0] + 1), height * 0.5 * (ndc[1] + 1)])
+            else:
+                screen_pts.append([width / 2, height / 2])
+
+        # Draw axes
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
+
+        for axis_idx in range(3):
+            for thickness in range(-1, 2):
+                for offset in range(-1, 2):
+                    p1 = [screen_pts[0][0] + thickness, screen_pts[0][1] + offset]
+                    p2 = [screen_pts[axis_idx + 1][0] + thickness, screen_pts[axis_idx + 1][1] + offset]
+
+                    # Simple line drawing (Bresenham's algorithm)
+                    x1, y1, x2, y2 = int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])
+                    dx, dy = abs(x2 - x1), abs(y2 - y1)
+                    sx, sy = 1 if x1 < x2 else -1, 1 if y1 < y2 else -1
+                    err = dx - dy
+
+                    while True:
+                        if 0 <= x1 < width and 0 <= y1 < height:
+                            img.putpixel((x1, y1), colors[axis_idx] + (255,))
+                        if x1 == x2 and y1 == y2:
+                            break
+                        e2 = 2 * err
+                        if e2 > -dy:
+                            err -= dy
+                            x1 += sx
+                        if e2 < dx:
+                            err += dx
+                            y1 += sy
+
+        if filename:
+            img.save(filename)
+
         return img.rotate(gamma)
 
     def _background_preprocess_detailed(self, input_image, do_remove_background):
@@ -326,7 +317,7 @@ class OrientAny:
 if __name__ == "__main__":
     # Use HF Space version (if you have ronormsigma1 checkpoint)
     orient_any = OrientAny("ckpts", "ronormsigma1_dino_weight.pt")
-    result = orient_any.predict("tt2.png")
+    result = orient_any.predict("tt1.png")
 
     print(f"Checkpoint: {orient_any.ckpt_path}")
     print(f"Model: {orient_any.model_name}")
