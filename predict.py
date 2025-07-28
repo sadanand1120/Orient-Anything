@@ -10,390 +10,75 @@ from transformers import AutoImageProcessor
 import os
 import math
 import rembg
-from math import sqrt
-from functools import partial
-from copy import deepcopy
 
 from vision_tower import DINOv2_MLP
 
 
-# ============================================================================
-# MINIMAL 3D RENDERING IMPLEMENTATION (Independent of utils.py and render/)
-# ============================================================================
+def render_simple_axes(height, width, filename, cam_loc):
+    """Render 3D coordinate axes as lines with core transformation math"""
+    # Define axes (origin + 3 endpoints)
+    axes = [np.array([0, 0, 0, 1.0]), np.array([30, 0, 0, 1.0]),
+            np.array([0, 0, -30, 1.0]), np.array([0, 30, 0, 1.0])]
 
-class Vec2d:
-    __slots__ = "x", "y", "arr"
+    # Create transformation matrices
+    eye = np.array(cam_loc, dtype=np.float64)
+    f = eye / np.linalg.norm(eye)  # Simplified: target is origin
+    up = np.array([0, -1, 0])
+    l = np.cross(up, f) / np.linalg.norm(np.cross(up, f))
+    u = np.cross(f, l)
 
-    def __init__(self, *args):
-        if len(args) == 1 and isinstance(args[0], Vec3d):
-            self.arr = Vec3d.narr
+    view = np.array([[l[0], l[1], l[2], -np.dot(l, eye)],
+                     [u[0], u[1], u[2], -np.dot(u, eye)],
+                     [f[0], f[1], f[2], -np.dot(f, eye)],
+                     [0, 0, 0, 1.0]])
+
+    # Projection matrix (r=0.5, t=0.5, n=3, f=1000)
+    r, t, n, f = 0.5, 0.5, 3, 1000
+    proj = np.array([[n / r, 0, 0, 0], [0, n / t, 0, 0],
+                     [0, 0, -(f + n) / (f - n), (-2 * f * n) / (f - n)], [0, 0, -1, 0]])
+
+    # Transform points to screen coordinates
+    screen_pts = []
+    for pt in axes:
+        clip = proj @ view @ pt
+        if clip[3] != 0:
+            ndc = clip / clip[3]
+            screen_pts.append([width * 0.5 * (ndc[0] + 1), height * 0.5 * (ndc[1] + 1)])
         else:
-            assert len(args) == 2
-            self.arr = list(args)
-        self.x, self.y = [d if isinstance(d, int) else int(d + 0.5) for d in self.arr]
-
-    def __repr__(self):
-        return f"Vec2d({self.x}, {self.y})"
-
-    def __truediv__(self, other):
-        return (self.y - other.y) / (self.x - other.x)
-
-    def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
-
-
-class Vec3d:
-    __slots__ = "x", "y", "z", "arr"
-
-    def __init__(self, *args):
-        if len(args) == 1 and isinstance(args[0], Vec4d):
-            vec4 = args[0]
-            arr_value = (vec4.x, vec4.y, vec4.z)
-        else:
-            assert len(args) == 3
-            arr_value = args
-        self.arr = np.array(arr_value, dtype=np.float64)
-        self.x, self.y, self.z = self.arr
-
-    def __repr__(self):
-        return repr(f"Vec3d({','.join([repr(d) for d in self.arr])})")
-
-    def __sub__(self, other):
-        return self.__class__(*[ds - do for ds, do in zip(self.arr, other.arr)])
-
-    def __bool__(self):
-        return any(self.arr)
-
-
-class Mat4d:
-    def __init__(self, narr=None, value=None):
-        self.value = np.matrix(narr) if value is None else value
-
-    def __repr__(self):
-        return repr(self.value)
-
-    def __mul__(self, other):
-        return self.__class__(value=self.value * other.value)
-
-
-class Vec4d(Mat4d):
-    def __init__(self, *narr, value=None):
-        if value is not None:
-            self.value = value
-        elif len(narr) == 1 and isinstance(narr[0], Mat4d):
-            self.value = narr[0].value
-        else:
-            assert len(narr) == 4
-            self.value = np.matrix([[d] for d in narr])
-
-        self.x, self.y, self.z, self.w = (
-            self.value[0, 0], self.value[1, 0], self.value[2, 0], self.value[3, 0]
-        )
-        self.arr = self.value.reshape((1, 4))
-
-
-class Canvas:
-    def __init__(self, filename=None, height=500, width=500):
-        self.filename = filename
-        self.height, self.width = height, width
-        self.img = Image.new("RGBA", (self.height, self.width), (0, 0, 0, 0))
-
-    def draw(self, dots, color):
-        if isinstance(color, str):
-            color = ImageColor.getrgb(color)
-        if isinstance(dots, tuple):
-            dots = [dots]
-        for dot in dots:
-            if dot[0] >= self.height or dot[1] >= self.width or dot[0] < 0 or dot[1] < 0:
-                continue
-            self.img.putpixel(dot, color + (255,))
-
-    def add_white_border(self, border_size=5):
-        if self.img.mode != "RGBA":
-            self.img = self.img.convert("RGBA")
-        alpha = self.img.getchannel("A")
-        dilated_alpha = alpha.filter(ImageFilter.MaxFilter(size=5))
-        white_area = Image.new("RGBA", self.img.size, (255, 255, 255, 255))
-        white_area.putalpha(dilated_alpha)
-        result = Image.alpha_composite(white_area, self.img)
-        return result
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, type, value, traceback):
-        if self.filename:
-            self.img.save(self.filename)
-
-
-class Model:
-    def __init__(self, filename, texture_filename):
-        self.vertices = []
-        self.uv_vertices = []
-        self.uv_indices = []
-        self.indices = []
-
-        texture = Image.open(texture_filename)
-        self.texture_array = np.array(texture)
-        self.texture_width, self.texture_height = texture.size
-
-        with open(filename) as f:
-            for line in f:
-                if line.startswith("v "):
-                    x, y, z = [float(d) for d in line.strip("v").strip().split(" ")]
-                    self.vertices.append(Vec4d(x, y, z, 1))
-                elif line.startswith("vt "):
-                    u, v = [float(d) for d in line.strip("vt").strip().split(" ")]
-                    self.uv_vertices.append([u, v])
-                elif line.startswith("f "):
-                    facet = [d.split("/") for d in line.strip("f").strip().split(" ")]
-                    self.indices.append([int(d[0]) for d in facet])
-                    self.uv_indices.append([int(d[1]) for d in facet])
-
-
-def normalize(x, y, z):
-    unit = sqrt(x * x + y * y + z * z)
-    if unit == 0:
-        return 0, 0, 0
-    return x / unit, y / unit, z / unit
-
-
-def dot_product(a0, a1, a2, b0, b1, b2):
-    return a0 * b0 + a1 * b1 + a2 * b2
-
-
-def cross_product(a0, a1, a2, b0, b1, b2):
-    x = a1 * b2 - a2 * b1
-    y = a2 * b0 - a0 * b2
-    z = a0 * b1 - a1 * b0
-    return x, y, z
-
-
-def get_min_max(a, b, c):
-    min_val = a
-    max_val = a
-    if min_val > b:
-        min_val = b
-    if min_val > c:
-        min_val = c
-    if max_val < b:
-        max_val = b
-    if max_val < c:
-        max_val = c
-    return int(min_val), int(max_val)
-
-
-def generate_faces(triangles, width, height):
-    i, j, k, length = 0, 0, 0, 0
-    bcy, bcz, x, y, z = 0., 0., 0., 0., 0.
-    a, b, c = [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]
-    m, bc = [0., 0., 0.], [0., 0., 0.]
-    uva, uvb, uvc = [0., 0.], [0., 0.], [0., 0.]
-    minx, maxx, miny, maxy = 0, 0, 0, 0
-    length = triangles.shape[0]
-    zbuffer = {}
-    faces = []
-
-    for i in range(length):
-        a = triangles[i, 0, 0], triangles[i, 0, 1], triangles[i, 0, 2]
-        b = triangles[i, 1, 0], triangles[i, 1, 1], triangles[i, 1, 2]
-        c = triangles[i, 2, 0], triangles[i, 2, 1], triangles[i, 2, 2]
-        uva = triangles[i, 0, 3], triangles[i, 0, 4]
-        uvb = triangles[i, 1, 3], triangles[i, 1, 4]
-        uvc = triangles[i, 2, 3], triangles[i, 2, 4]
-        minx, maxx = get_min_max(a[0], b[0], c[0])
-        miny, maxy = get_min_max(a[1], b[1], c[1])
-        pixels = []
-        for j in range(minx, maxx + 2):
-            for k in range(miny - 1, maxy + 2):
-                x = j
-                y = k
-                m[0], m[1], m[2] = cross_product(c[0] - a[0], b[0] - a[0], a[0] - x, c[1] - a[1], b[1] - a[1], a[1] - y)
-                if abs(m[2]) > 0:
-                    bcy = m[1] / m[2]
-                    bcz = m[0] / m[2]
-                    bc = (1 - bcy - bcz, bcy, bcz)
-                else:
-                    continue
-                if bc[0] < -0.00001 or bc[1] < -0.00001 or bc[2] < -0.00001:
-                    continue
-                z = 1 / (bc[0] / a[2] + bc[1] / b[2] + bc[2] / c[2])
-                v = (uva[0] * bc[0] / a[2] + uvb[0] * bc[1] / b[2] + uvc[0] * bc[2] / c[2]) * z * width
-                u = height - (uva[1] * bc[0] / a[2] + uvb[1] * bc[1] / b[2] + uvc[1] * bc[2] / c[2]) * z * height
-                idx = ((x + y) * (x + y + 1) + y) / 2
-                if zbuffer.get(idx) is None or zbuffer[idx] < z:
-                    zbuffer[idx] = z
-                    pixels.append((i, j, k, int(u) - 1, int(v) - 1))
-        faces.append(pixels)
-    return faces
-
-
-def draw_line(v1, v2, canvas, color="white"):
-    v1, v2 = deepcopy(v1), deepcopy(v2)
-    if v1 == v2:
-        canvas.draw((v1.x, v1.y), color=color)
-        return
-
-    steep = abs(v1.y - v2.y) > abs(v1.x - v2.x)
-    if steep:
-        v1.x, v1.y = v1.y, v1.x
-        v2.x, v2.y = v2.y, v2.x
-    v1, v2 = (v1, v2) if v1.x < v2.x else (v2, v1)
-    slope = abs((v1.y - v2.y) / (v1.x - v2.x))
-    y = v1.y
-    error = 0
-    incr = 1 if v1.y < v2.y else -1
-    dots = []
-    for x in range(int(v1.x), int(v2.x + 0.5)):
-        dots.append((int(y), x) if steep else (x, int(y)))
-        error += slope
-        if abs(error) >= 0.5:
-            y += incr
-            error -= 1
-    canvas.draw(dots, color=color)
-
-
-def draw_triangle(v1, v2, v3, canvas, color, wireframe=False):
-    _draw_line = partial(draw_line, canvas=canvas, color=color)
-
-    if wireframe:
-        _draw_line(v1, v2)
-        _draw_line(v2, v3)
-        _draw_line(v1, v3)
-        return
-
-    def sort_vertices_asc_by_y(vertices):
-        return sorted(vertices, key=lambda v: v.y)
-
-    def fill_bottom_flat_triangle(v1, v2, v3):
-        invslope1 = (v2.x - v1.x) / (v2.y - v1.y)
-        invslope2 = (v3.x - v1.x) / (v3.y - v1.y)
-        x1 = x2 = v1.x
-        y = v1.y
-        while y <= v2.y:
-            _draw_line(Vec2d(x1, y), Vec2d(x2, y))
-            x1 += invslope1
-            x2 += invslope2
-            y += 1
-
-    def fill_top_flat_triangle(v1, v2, v3):
-        invslope1 = (v3.x - v1.x) / (v3.y - v1.y)
-        invslope2 = (v3.x - v2.x) / (v3.y - v2.y)
-        x1 = x2 = v3.x
-        y = v3.y
-        while y > v2.y:
-            _draw_line(Vec2d(x1, y), Vec2d(x2, y))
-            x1 -= invslope1
-            x2 -= invslope2
-            y -= 1
-
-    v1, v2, v3 = sort_vertices_asc_by_y((v1, v2, v3))
-
-    if v1.y == v2.y == v3.y:
-        pass
-    elif v2.y == v3.y:
-        fill_bottom_flat_triangle(v1, v2, v3)
-    elif v1.y == v2.y:
-        fill_top_flat_triangle(v1, v2, v3)
-    else:
-        v4 = Vec2d(int(v1.x + (v2.y - v1.y) / (v3.y - v1.y) * (v3.x - v1.x)), v2.y)
-        fill_bottom_flat_triangle(v1, v2, v4)
-        fill_top_flat_triangle(v2, v4, v3)
-
-
-def normalize_vec3d(v):
-    return Vec3d(*normalize(*v.arr))
-
-
-def dot_product_vec3d(a, b):
-    return dot_product(*a.arr, *b.arr)
-
-
-def cross_product_vec3d(a, b):
-    return Vec3d(*cross_product(*a.arr, *b.arr))
-
-
-BASE_LIGHT = 0.9
-
-
-def get_light_intensity(face):
-    lights = [Vec3d(-2, 4, -10)]
-    v1, v2, v3 = face
-    up = normalize_vec3d(cross_product_vec3d(v2 - v1, v3 - v1))
-    intensity = BASE_LIGHT
-    for light in lights:
-        intensity += dot_product_vec3d(up, normalize_vec3d(light)) * 0.2
-    return intensity
-
-
-def look_at(eye, target, up=Vec3d(0, -1, 0)):
-    f = normalize_vec3d(eye - target)
-    l = normalize_vec3d(cross_product_vec3d(up, f))
-    u = cross_product_vec3d(f, l)
-
-    rotate_matrix = Mat4d([[l.x, l.y, l.z, 0], [u.x, u.y, u.z, 0], [f.x, f.y, f.z, 0], [0, 0, 0, 1.0]])
-    translate_matrix = Mat4d([[1, 0, 0, -eye.x], [0, 1, 0, -eye.y], [0, 0, 1, -eye.z], [0, 0, 0, 1.0]])
-
-    return Mat4d(value=(rotate_matrix * translate_matrix).value)
-
-
-def perspective_project(r, t, n, f, b=None, l=None):
-    return Mat4d([[n / r, 0, 0, 0], [0, n / t, 0, 0], [0, 0, -(f + n) / (f - n), (-2 * f * n) / (f - n)], [0, 0, -1, 0]])
-
-
-def draw_with_z_buffer(screen_vertices, world_vertices, model, canvas):
-    intensities = []
-    triangles = []
-    for i, triangle_indices in enumerate(model.indices):
-        screen_triangle = [screen_vertices[idx - 1] for idx in triangle_indices]
-        uv_triangle = [model.uv_vertices[idx - 1] for idx in model.uv_indices[i]]
-        world_triangle = [Vec3d(world_vertices[idx - 1]) for idx in triangle_indices]
-        intensities.append(abs(get_light_intensity(world_triangle)))
-        triangles.append([np.append(screen_triangle[i].arr, uv_triangle[i]) for i in range(3)])
-
-    faces = generate_faces(np.array(triangles, dtype=np.float64), model.texture_width, model.texture_height)
-    for face_dots in faces:
-        for dot in face_dots:
-            intensity = intensities[dot[0]]
-            u, v = dot[3], dot[4]
-            color = model.texture_array[u, v]
-            canvas.draw((dot[1], dot[2]), tuple(int(c * intensity) for c in color[:3]))
-
-
-def render_3d_model(model, height, width, filename, cam_loc, wireframe=False):
-    model_matrix = Mat4d([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-    view_matrix = look_at(Vec3d(cam_loc[0], cam_loc[1], cam_loc[2]), Vec3d(0, 0, 0))
-    projection_matrix = perspective_project(0.5, 0.5, 3, 1000)
-
-    world_vertices = []
-
-    def mvp(v):
-        world_vertex = model_matrix * v
-        world_vertices.append(Vec4d(world_vertex))
-        return projection_matrix * view_matrix * world_vertex
-
-    def ndc(v):
-        v = v.value
-        w = v[3, 0]
-        x, y, z = v[0, 0] / w, v[1, 0] / w, v[2, 0] / w
-        return Mat4d([[x], [y], [z], [1 / w]])
-
-    def viewport(v):
-        x = y = 0
-        w, h = width, height
-        n, f = 0.3, 1000
-        return Vec3d(
-            w * 0.5 * v.value[0, 0] + x + w * 0.5,
-            h * 0.5 * v.value[1, 0] + y + h * 0.5,
-            0.5 * (f - n) * v.value[2, 0] + 0.5 * (f + n),
-        )
-
-    screen_vertices = [viewport(ndc(mvp(v))) for v in model.vertices]
-
-    with Canvas(filename, height, width) as canvas:
-        draw_with_z_buffer(screen_vertices, world_vertices, model, canvas)
-        render_img = canvas.add_white_border().copy()
-    return render_img
+            screen_pts.append([width / 2, height / 2])
+
+    # Draw axes
+    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
+
+    for axis_idx in range(3):
+        for thickness in range(-1, 2):
+            for offset in range(-1, 2):
+                p1 = [screen_pts[0][0] + thickness, screen_pts[0][1] + offset]
+                p2 = [screen_pts[axis_idx + 1][0] + thickness, screen_pts[axis_idx + 1][1] + offset]
+
+                # Simple line drawing
+                x1, y1, x2, y2 = int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])
+                dx, dy = abs(x2 - x1), abs(y2 - y1)
+                sx, sy = 1 if x1 < x2 else -1, 1 if y1 < y2 else -1
+                err = dx - dy
+
+                while True:
+                    if 0 <= x1 < width and 0 <= y1 < height:
+                        img.putpixel((x1, y1), colors[axis_idx] + (255,))
+                    if x1 == x2 and y1 == y2:
+                        break
+                    e2 = 2 * err
+                    if e2 > -dy:
+                        err -= dy
+                        x1 += sx
+                    if e2 < dx:
+                        err += dx
+                        y1 += sy
+
+    if filename:
+        img.save(filename)
+    return img
 
 
 # ============================================================================
@@ -410,9 +95,6 @@ class OrientAny:
         self.val_preprocess = None
         self.output_dim = self._get_output_dim()
         self._load_model()
-
-        # Load 3D axis model for rendering
-        self.axis_model = Model("./assets/axis.obj", texture_filename="./assets/axis.png")
 
     def _load_model(self):
         """Load DINOv2 model and preprocessor"""
@@ -556,11 +238,10 @@ class OrientAny:
         }
 
     def _render_3D_axis(self, phi, theta, gamma):
-        """Render 3D coordinate axes using custom renderer"""
+        """Render 3D coordinate axes as simple lines"""
         radius = 240
         camera_location = [-1 * radius * math.cos(phi), -1 * radius * math.tan(theta), radius * math.sin(phi)]
-        img = render_3d_model(
-            self.axis_model,
+        img = render_simple_axes(
             height=512,
             width=512,
             filename="tmp_render.png",
