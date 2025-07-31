@@ -5,13 +5,103 @@ Replicates Hugging Face Space demo exactly: https://huggingface.co/spaces/Viglon
 import torch
 import torch.nn.functional as F
 import numpy as np
-from PIL import Image, ImageOps, ImageFilter, ImageColor
+from PIL import Image, ImageOps, ImageFilter, ImageColor, ImageDraw
 from transformers import AutoImageProcessor
 import os
 import math
 import rembg
 
 from vision_tower import DINOv2_MLP
+
+# TODO MAJOR: look at matplotlib_2D_arrow in utils.py, looks like it already does what we need
+
+
+def f_spherical_to_cartesian(rho, phi, theta):
+    """
+    Convert spherical coordinates to Cartesian coordinates
+    rho: radius -> distance from origin, +ve
+    phi: azimuth (0-2pi) radians -> with x axis, towards y axis
+    theta: polar (0-pi) radians -> with z axis
+    """
+    r = rho * math.sin(theta)
+    x = r * math.cos(phi)
+    y = r * math.sin(phi)
+    z = rho * math.cos(theta)
+    return x, y, z
+
+
+def compute_camera_position(phi, theta, radius=240):
+    # exactly: [-r*cos(phi), -r*tan(theta), r*sin(phi)]
+    return np.array([
+        -radius * math.cos(phi),
+        -radius * math.tan(theta),
+        radius * math.sin(phi)
+    ], dtype=np.float64)
+
+
+def build_view_matrix(eye):
+    # exactly your f, l, u and view matrix
+    f = eye / np.linalg.norm(eye)
+    up = np.array([0, -1, 0], dtype=np.float64)
+    l = np.cross(up, f)
+    l /= np.linalg.norm(l)
+    u = np.cross(f, l)
+    return np.array([
+        [l[0], l[1], l[2], -np.dot(l, eye)],
+        [u[0], u[1], u[2], -np.dot(u, eye)],
+        [f[0], f[1], f[2], -np.dot(f, eye)],
+        [0, 0, 0, 1.0]
+    ], dtype=np.float64)
+
+
+def build_proj_matrix(r=0.5, t=0.5, n=3.0, f=1000.0):
+    # exactly your proj
+    return np.array([
+        [n / r, 0, 0, 0],
+        [0, n / t, 0, 0],
+        [0, 0, -(f + n) / (f - n), -2 * f * n / (f - n)],
+        [0, 0, -1, 0],
+    ], dtype=np.float64)
+
+
+def project_to_screen(axes, view, proj, width=512, height=512):
+    pts = []
+    for pt in axes:
+        clip = proj @ view @ pt
+        if clip[3] != 0:
+            ndc = clip / clip[3]
+            x = width * 0.5 * (ndc[0] + 1)
+            y = height * 0.5 * (ndc[1] + 1)
+        else:
+            x, y = width / 2, height / 2
+        pts.append((x, y))
+    return pts
+
+
+def draw_thick_bresenham(img, p1, p2, color):
+    # exactly your triple-loop Bresenham for a 3×3 stencil
+    w, h = img.size
+    x1, y1 = int(p1[0]), int(p1[1])
+    x2, y2 = int(p2[0]), int(p2[1])
+    dx, dy = abs(x2 - x1), abs(y2 - y1)
+    sx = 1 if x1 < x2 else -1
+    sy = 1 if y1 < y2 else -1
+    err = dx - dy
+    while True:
+        for tx in (-1, 0, 1):
+            for ty in (-1, 0, 1):
+                xp, yp = x1 + tx, y1 + ty
+                if 0 <= xp < w and 0 <= yp < h:
+                    img.putpixel((xp, yp), color + (255,))
+        if x1 == x2 and y1 == y2:
+            break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            x1 += sx
+        if e2 < dx:
+            err += dx
+            y1 += sy
 
 
 class OrientAny:
@@ -91,6 +181,12 @@ class OrientAny:
 
         confidence = F.softmax(dino_pred[:, -2:], dim=-1)[0][0]
 
+        # # TODO: hijack
+        # gaus_ax_pred = 0
+        # gaus_pl_pred = 91
+        # gaus_ro_pred = 183
+        # confidence = 1
+
         angles = torch.zeros(4)
         angles[0] = gaus_ax_pred                    # Azimuth: 0-360°
         angles[1] = gaus_pl_pred - 90               # Polar: -90° to 90°
@@ -167,77 +263,36 @@ class OrientAny:
         }
 
     @staticmethod
-    def _render_3D_axis(phi, theta, gamma):
-        """Render 3D coordinate axes as simple lines"""
-        radius = 240
-        camera_location = [-1 * radius * math.cos(phi), -1 * radius * math.tan(theta), radius * math.sin(phi)]
-
-        # Inlined render_simple_axes code
-        height, width, filename, cam_loc = 512, 512, "tmp_render.png", camera_location
-
-        # Define axes (origin + 3 endpoints)
-        axes = [np.array([0, 0, 0, 1.0]), np.array([30, 0, 0, 1.0]),
-                np.array([0, 0, -30, 1.0]), np.array([0, 30, 0, 1.0])]
-
-        # Create transformation matrices
-        eye = np.array(cam_loc, dtype=np.float64)
-        f = eye / np.linalg.norm(eye)  # Simplified: target is origin
-        up = np.array([0, -1, 0])
-        l = np.cross(up, f) / np.linalg.norm(np.cross(up, f))
-        u = np.cross(f, l)
-
-        view = np.array([[l[0], l[1], l[2], -np.dot(l, eye)],
-                         [u[0], u[1], u[2], -np.dot(u, eye)],
-                         [f[0], f[1], f[2], -np.dot(f, eye)],
-                         [0, 0, 0, 1.0]])
-
-        # Projection matrix (r=0.5, t=0.5, n=3, f=1000)
-        r, t, n, f = 0.5, 0.5, 3, 1000
-        proj = np.array([[n / r, 0, 0, 0], [0, n / t, 0, 0],
-                         [0, 0, -(f + n) / (f - n), (-2 * f * n) / (f - n)], [0, 0, -1, 0]])
-
-        # Transform points to screen coordinates
-        screen_pts = []
-        for pt in axes:
-            clip = proj @ view @ pt
-            if clip[3] != 0:
-                ndc = clip / clip[3]
-                screen_pts.append([width * 0.5 * (ndc[0] + 1), height * 0.5 * (ndc[1] + 1)])
-            else:
-                screen_pts.append([width / 2, height / 2])
-
-        # Draw axes
+    def _render_3D_axis(phi, theta, gamma,
+                        radius=240, axes_len=30,
+                        width=512, height=512,
+                        save_path=None):
+        # 1) camera
+        eye = compute_camera_position(phi, theta, radius)
+        # 2) view & proj
+        view = build_view_matrix(eye)
+        proj = build_proj_matrix()
+        # 3) world axes: origin, X, Z, Y (same order as yours)
+        axes = [
+            np.array([0, 0, 0, 1.0]),
+            np.array([axes_len, 0, 0, 1.0]),
+            np.array([0, 0, -axes_len, 1.0]),
+            np.array([0, axes_len, 0, 1.0]),
+        ]
+        # 4) project → screen coords
+        screen_pts = project_to_screen(axes, view, proj, width, height)
+        # 5) draw each axis in your original color order
         img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]  # Red, Green, Blue
-
-        for axis_idx in range(3):
-            for thickness in range(-1, 2):
-                for offset in range(-1, 2):
-                    p1 = [screen_pts[0][0] + thickness, screen_pts[0][1] + offset]
-                    p2 = [screen_pts[axis_idx + 1][0] + thickness, screen_pts[axis_idx + 1][1] + offset]
-
-                    # Simple line drawing (Bresenham's algorithm)
-                    x1, y1, x2, y2 = int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1])
-                    dx, dy = abs(x2 - x1), abs(y2 - y1)
-                    sx, sy = 1 if x1 < x2 else -1, 1 if y1 < y2 else -1
-                    err = dx - dy
-
-                    while True:
-                        if 0 <= x1 < width and 0 <= y1 < height:
-                            img.putpixel((x1, y1), colors[axis_idx] + (255,))
-                        if x1 == x2 and y1 == y2:
-                            break
-                        e2 = 2 * err
-                        if e2 > -dy:
-                            err -= dy
-                            x1 += sx
-                        if e2 < dx:
-                            err += dx
-                            y1 += sy
-
-        if filename:
-            img.save(filename)
-
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+        for idx in range(3):
+            draw_thick_bresenham(img,
+                                 screen_pts[0],
+                                 screen_pts[idx + 1],
+                                 colors[idx])
+        # 6) optional save
+        if save_path:
+            img.save(save_path)
+        # 7) final in‑plane roll (exactly as original)
         return img.rotate(gamma)
 
     def _background_preprocess_detailed(self, input_image, do_remove_background):
