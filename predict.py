@@ -10,15 +10,15 @@ from transformers import AutoImageProcessor
 import os
 import math
 import rembg
+np.set_printoptions(precision=3, suppress=True)
 
 from vision_tower import DINOv2_MLP
+from homography import Homography
 
-# TODO MAJOR: look at matplotlib_2D_arrow in utils.py, looks like it already does what we need
 
-
-def f_spherical_to_cartesian(rho, phi, theta):
+def normal_spherical_to_cartesian(rho, phi, theta):
     """
-    Convert spherical coordinates to Cartesian coordinates
+    Convert spherical coordinates to Cartesian coordinates (normal convention)
     rho: radius -> distance from origin, +ve
     phi: azimuth (0-2pi) radians -> with x axis, towards y axis
     theta: polar (0-pi) radians -> with z axis
@@ -30,13 +30,75 @@ def f_spherical_to_cartesian(rho, phi, theta):
     return x, y, z
 
 
-def compute_camera_position(phi, theta, radius=240):
-    # exactly: [-r*cos(phi), -r*tan(theta), r*sin(phi)]
-    return np.array([
-        -radius * math.cos(phi),
-        -radius * math.tan(theta),
-        radius * math.sin(phi)
-    ], dtype=np.float64)
+def spherical_to_cartesian(rho, phi, theta=None, theta_elev=None):
+    """
+    Convert spherical coordinates to Cartesian coordinates (orient-anything convention)
+    Convention: x forward, y up
+    rho: radius -> distance from origin, +ve
+    phi: azimuth (0-2pi) radians -> with x axis, towards -z axis
+    theta: polar (0-pi) radians -> with -y axis
+    theta_elev = theta - math.pi / 2  # Elevation angle, -pi/2 to pi/2
+    """
+    if theta is not None:
+        theta_elev = theta - math.pi / 2
+    elif theta_elev is not None:
+        pass
+    else:
+        raise ValueError("Either theta or theta_elev must be provided")
+
+    r = rho * math.cos(theta_elev)
+    x = r * math.cos(phi)
+    y = r * math.tan(theta_elev)
+    z = -r * math.sin(phi)
+    return x, y, z
+
+
+def get_world_axes_ori_to_cam_facing_origin_ccs_T():
+    T = np.asarray([
+        [0, 0, -1, 0],
+        [0, -1, 0, 0],
+        [-1, 0, 0, 0],
+        [0, 0, 0, 1]
+    ])
+    return T
+
+
+def get_K(r=0.5, t=0.5, n=3.0, img_w=512, img_h=512):
+    """
+    Build an OpenCV-style 3×3 intrinsic matrix K whose focal lengths / principal
+    point are consistent with the OpenGL-style projection matrix
+
+        build_proj_matrix(r, t, n, f)
+
+    Parameters
+    ----------
+    r, t : float
+        Half–width (r) and half–height (t) of the near plane, expressed in the
+        same world units as `n`.
+    n    : float
+        Near-plane distance (camera → near clipping plane).
+    img_w, img_h : int
+        Frame buffer / image resolution in **pixels**.
+
+    Returns
+    -------
+    K : (3,3) ndarray (dtype float64)
+        Intrinsic matrix in the pinhole form
+            [[f_x,  0,  c_x],
+             [ 0,  f_y, c_y],
+             [ 0,   0,   1 ]]
+    """
+    # focal lengths in pixel units
+    fx = (img_w / 2.0) * (n / r)
+    fy = (img_h / 2.0) * (n / t)
+
+    # principal point: centre of the viewport
+    cx = img_w / 2.0
+    cy = img_h / 2.0
+
+    return np.array([[fx, 0.0, cx],
+                     [0.0, fy, cy],
+                     [0.0, 0.0, 1.0]], dtype=np.float64)
 
 
 def build_view_matrix(eye):
@@ -182,14 +244,14 @@ class OrientAny:
         confidence = F.softmax(dino_pred[:, -2:], dim=-1)[0][0]
 
         # # TODO: hijack
-        # gaus_ax_pred = 0
-        # gaus_pl_pred = 91
-        # gaus_ro_pred = 183
+        # gaus_ax_pred = 5    # 0-360
+        # gaus_pl_pred = 92   # 0-180
+        # gaus_ro_pred = 190
         # confidence = 1
 
         angles = torch.zeros(4)
         angles[0] = gaus_ax_pred                    # Azimuth: 0-360°
-        angles[1] = gaus_pl_pred - 90               # Polar: -90° to 90°
+        angles[1] = gaus_pl_pred - 90               # Elevation: -90° to 90°
         angles[2] = gaus_ro_pred - ro_offset        # Rotation: varies by checkpoint
         angles[3] = confidence                      # Confidence: 0-1
 
@@ -238,13 +300,13 @@ class OrientAny:
         origin_img = Image.open(image_path).convert('RGB')
         rm_bkg_img = self._background_preprocess_detailed(origin_img, remove_bg)
 
-        # Get angles
+        # Get angles (all degrees)
         angles = self._get_3angle(rm_bkg_img)
 
         # Convert to radians for rendering
         phi = np.radians(angles[0])
         theta = np.radians(angles[1])
-        gamma = angles[2]
+        gamma = np.radians(angles[2])
         confidence = float(angles[3])
 
         # Render result
@@ -268,16 +330,18 @@ class OrientAny:
                         width=512, height=512,
                         save_path=None):
         # 1) camera
-        eye = compute_camera_position(phi, theta, radius)
+        x_cam, y_cam, z_cam = spherical_to_cartesian(radius, phi, theta_elev=theta)
+        eye = np.array([x_cam, y_cam, z_cam])
+        eye = -eye   # TODO: why? maybe https://github.com/SpatialVision/Orient-Anything/issues/3#issuecomment-2567585994
         # 2) view & proj
         view = build_view_matrix(eye)
         proj = build_proj_matrix()
-        # 3) world axes: origin, X, Z, Y (same order as yours)
+        # 3) world axes: origin, X, Y, Z
         axes = [
             np.array([0, 0, 0, 1.0]),
             np.array([axes_len, 0, 0, 1.0]),
-            np.array([0, 0, -axes_len, 1.0]),
             np.array([0, axes_len, 0, 1.0]),
+            np.array([0, 0, axes_len, 1.0]),
         ]
         # 4) project → screen coords
         screen_pts = project_to_screen(axes, view, proj, width, height)
@@ -293,7 +357,42 @@ class OrientAny:
         if save_path:
             img.save(save_path)
         # 7) final in‑plane roll (exactly as original)
-        return img.rotate(gamma)
+        return img.rotate(np.rad2deg(gamma))
+
+    @staticmethod
+    def _render_3D_axis_new(phi, theta_elev, gamma,
+                            radius=16, axes_len=2,
+                            width=512, height=512,
+                            save_path=None):
+        T1 = Homography.get_std_rot("Y", phi)
+        T2 = Homography.get_std_rot("Z", theta_elev)
+        T3 = Homography.get_std_trans(cx=radius)
+        T_wcs_to_wcs_at_rho_theta_phi = T3 @ T2 @ T1
+        T_wcs_at_rho_theta_phi_to_ccs_facing_origin = get_world_axes_ori_to_cam_facing_origin_ccs_T()
+        T_wcs_to_ccs_facing_origin_norot = T_wcs_at_rho_theta_phi_to_ccs_facing_origin @ T_wcs_to_wcs_at_rho_theta_phi
+        T_ccs_facing_origin_norot_to_ccs_facing_origin = Homography.get_std_rot("Z", gamma)
+        T_wcs_to_ccs_facing_origin = T_ccs_facing_origin_norot_to_ccs_facing_origin @ T_wcs_to_ccs_facing_origin_norot
+        wcs_pts = [
+            np.array([0, 0, 0]),
+            np.array([axes_len, 0, 0]),
+            np.array([0, axes_len, 0]),
+            np.array([0, 0, axes_len])
+        ]
+        ccs_pts = Homography.general_project_A_to_B(wcs_pts, T_wcs_to_ccs_facing_origin)
+        K = get_K(r=0.5, t=0.5, n=3.0, img_w=width, img_h=height)
+        pcs_pts, pcs_mask = Homography.projectCCStoPCS(ccs_pts, K, width, height)
+        # import ipdb; ipdb.set_trace()
+        pcs_pts = pcs_pts.tolist()
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+        for idx in range(3):
+            draw_thick_bresenham(img,
+                                 pcs_pts[0],
+                                 pcs_pts[idx + 1],
+                                 colors[idx])
+        if save_path:
+            img.save(save_path)
+        return img
 
     def _background_preprocess_detailed(self, input_image, do_remove_background):
         """Preprocess image with optional background removal"""
@@ -372,13 +471,12 @@ class OrientAny:
 if __name__ == "__main__":
     # Use HF Space version (if you have ronormsigma1 checkpoint)
     orient_any = OrientAny("ckpts", "ronormsigma1_dino_weight.pt")
-    result = orient_any.predict("tt1.png")
 
+    result = orient_any.predict("tt1.png")
     print(f"Checkpoint: {orient_any.ckpt_path}")
     print(f"Model: {orient_any.model_name}")
     print(f"Azimuth: {result['azimuth']}°")
     print(f"Polar: {result['polar']}°")
     print(f"Rotation: {result['rotation']}°")
     print(f"Confidence: {result['confidence']}")
-
     result['result_image'].save("output.png")
