@@ -1,12 +1,7 @@
-# Standard library imports
 import math
-import os
 from copy import deepcopy
-
-# Third-party imports
 import cv2
 import numpy as np
-import yaml
 
 
 class Homography:
