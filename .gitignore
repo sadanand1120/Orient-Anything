@@ -3,5 +3,4 @@
 .locks
 models*
 .vscode
-ckpts/
 **.pt
