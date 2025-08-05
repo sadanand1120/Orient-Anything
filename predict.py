@@ -12,6 +12,7 @@ import rembg
 import matplotlib.pyplot as plt
 import json
 import os
+import math
 
 from vision_tower import DINOv2_MLP
 from homography import Homography
@@ -37,6 +38,14 @@ class OrientAny:
         self.val_preprocess = AutoImageProcessor.from_pretrained(preprocessors[self.model_config['dino_mode']])
 
     def get_model_outputs(self, image):
+        """
+        azimuth(phi): 0-360, angle from x-axis to y-axis (about +z-axis) [normal spherical coordinates convention]
+        polar(theta): 0-180, angle from +z-axis to rho vector joining origin to the point [normal spherical coordinates convention]
+            * theta = pi - theta_model
+            * theta_elev = pi/2 - theta
+            => theta_elev = theta_model - pi/2
+        roll(delta): the rotation of the camera about the +z of opencv-style normal CCS coordinate system facing the origin
+        """
         image_inputs = self.val_preprocess(images=image)
         image_inputs['pixel_values'] = torch.from_numpy(np.array(image_inputs['pixel_values'])).to(self.device)
         with torch.no_grad():
@@ -47,7 +56,9 @@ class OrientAny:
         confidence = F.softmax(preds[:, -2:], dim=-1)[0][0]
         return {
             'phi': float(gaus_ax_pred),
-            'theta': float(gaus_pl_pred),
+            'theta_model': float(gaus_pl_pred),
+            'theta_elev': float(gaus_pl_pred) - 90,
+            'theta': 180 - float(gaus_pl_pred),
             'delta': float(gaus_ro_pred) - self.model_config['ro_offset'],
             'confidence': float(confidence),    # confidence < 0.5: no axes was plotted
         }
@@ -56,7 +67,7 @@ class OrientAny:
         origin_img = Image.open(image_path).convert('RGB')
         rm_bkg_img = self.preprocess_remove_bkg(origin_img, remove_bg)
         outs = self.get_model_outputs(rm_bkg_img)
-        result_img = self.draw_axes_on_image(rm_bkg_img, phi=outs['phi'], theta=outs['theta'], delta=outs['delta'])
+        result_img = self.draw_axes_on_image(rm_bkg_img, phi=outs['phi'], theta_elev=outs['theta_elev'], delta=outs['delta'])
         return result_img, outs
 
     @staticmethod
@@ -66,13 +77,13 @@ class OrientAny:
         cx, cy = img_w / 2.0, img_h / 2.0
         return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
 
-    def draw_axes_on_image(self, image, phi, theta, delta, radius=16, axes_len=2):
-        T1 = Homography.get_std_rot("Y", np.deg2rad(phi))
-        theta_elev = theta - 90
-        T2 = Homography.get_std_rot("Z", np.deg2rad(theta_elev))
+    @staticmethod
+    def draw_axes_on_image(image, phi, theta_elev, delta, radius=16, axes_len=2):
+        T1 = Homography.get_std_rot("Z", np.deg2rad(phi))
+        T2 = Homography.get_std_rot("Y", -np.deg2rad(theta_elev))
         T3 = Homography.get_std_trans(cx=radius)
-        T_wcs_to_wcs_at_rho_theta_phi = T3 @ T2 @ T1
-        T_wcs_at_rho_theta_phi_to_ccs_facing_origin = np.asarray([[0, 0, -1, 0], [0, -1, 0, 0], [-1, 0, 0, 0], [0, 0, 0, 1]])
+        T_wcs_to_wcs_at_rho_theta_phi = T3 @ T2 @ T1  # +x facing along rho, away from origin
+        T_wcs_at_rho_theta_phi_to_ccs_facing_origin = np.asarray([[0, 1, 0, 0], [0, 0, -1, 0], [-1, 0, 0, 0], [0, 0, 0, 1]])
         T_wcs_at_rho_theta_phi_to_ccs_facing_origin_norot = T_wcs_at_rho_theta_phi_to_ccs_facing_origin @ T_wcs_to_wcs_at_rho_theta_phi
         T_ccs_facing_origin_norot_to_ccs_facing_origin = Homography.get_std_rot("Z", np.deg2rad(delta))
         T_wcs_to_ccs_facing_origin = T_ccs_facing_origin_norot_to_ccs_facing_origin @ T_wcs_at_rho_theta_phi_to_ccs_facing_origin_norot
@@ -128,7 +139,7 @@ if __name__ == "__main__":
     orient_any = OrientAny("ckpts", "ronormsigma1_dino_weight.pt")
     result_img, outs = orient_any.predict("tt1.png")
     print(f"Azimuth: {round(outs['phi'], 2)}°")
-    print(f"Elevation: {round(outs['theta'] - 90, 2)}°")
+    print(f"Elevation: {round(outs['theta_elev'], 2)}°")
     print(f"Rotation: {round(outs['delta'], 2)}°")
     print(f"Confidence: {round(outs['confidence'], 2)}")
     result_img.save("output.png")
