@@ -78,7 +78,7 @@ class FLIP_Dinov2Embeddings(Dinov2Embeddings):
 
         if bool_masked_pos is not None:
             B, S, D = embeddings.shape
-            batch_indices = torch.arange(B).unsqueeze(1)
+            batch_indices = torch.arange(B, device=embeddings.device).unsqueeze(1)
             embeddings = embeddings[batch_indices, bool_masked_pos]
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -128,12 +128,12 @@ class DINOv2_MLP(nn.Module):
                 S = 256
                 indices = []
                 for i in range(B):
-                    tmp = torch.randperm(S)[:S // 2]
+                    tmp = torch.randperm(S, device=device)[:S // 2]
                     tmp = tmp.sort().values + 1
                     indices.append(tmp)
                 indices = torch.stack(indices, dim=0)
-                indices = torch.cat([torch.zeros(B, 1, dtype=torch.long, device='cpu'), indices], dim=1)
-                img_inputs['bool_masked_pos'] = indices.to(device)
+                indices = torch.cat([torch.zeros(B, 1, dtype=torch.long, device=device), indices], dim=1)
+                img_inputs['bool_masked_pos'] = indices
             dino_outputs = self.dinov2(**img_inputs)
             dino_seq = dino_outputs.last_hidden_state
             dino_seq = dino_seq[:, 0, :]
@@ -142,6 +142,12 @@ class DINOv2_MLP(nn.Module):
 
     def get_device(self):
         return next(self.parameters()).device
+
+    def to(self, device):
+        # Ensure both DINOv2 backbone and down_sampler are moved to device
+        self.dinov2 = self.dinov2.to(device)
+        self.down_sampler = self.down_sampler.to(device)
+        return super().to(device)
 
     def init_weights(self, m):
         if isinstance(m, nn.Linear):

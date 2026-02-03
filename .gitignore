@@ -3,4 +3,5 @@
 .locks
 models*
 .vscode
+.cursor
 **.pt
